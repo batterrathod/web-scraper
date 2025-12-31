@@ -1,52 +1,66 @@
 /**
  * Moneyview IVR Scraper
- * FREE 24/7 using GitHub Actions Cron
- * One-run architecture (no infinite loop)
+ * GitHub Actions + Local compatible
+ * One-run architecture (NO infinite loop)
  */
 
+require("dotenv").config();
 const puppeteer = require("puppeteer");
 const mysql = require("mysql2/promise");
 
-/* ==========================
-   CONFIG (ENV VARIABLES)
-========================== */
-const LOGIN_URL = "https://mv-dashboard.switchmyloan.in/login";
-const DATA_URL = "https://mv-dashboard.switchmyloan.in/mv-ivr-logs";
+/* ===============================
+   FAIL-FAST ENV VALIDATION
+================================ */
+function mustEnv(name) {
+    if (!process.env[name] || process.env[name].trim() === "") {
+        console.error(`❌ MISSING ENV VARIABLE: ${name}`);
+        process.exit(1);
+    }
+    return process.env[name];
+}
 
-const EMAIL = process.env.LOGIN_EMAIL;
-const PASSWORD = process.env.LOGIN_PASSWORD;
+/* ===============================
+   CONFIG
+================================ */
+const LOGIN_URL = "https://mv-dashboard.switchmyloan.in/login";
+const DATA_URL  = "https://mv-dashboard.switchmyloan.in/mv-ivr-logs";
+
+const EMAIL    = mustEnv("LOGIN_EMAIL");
+const PASSWORD = mustEnv("LOGIN_PASSWORD");
 
 const DB_CONFIG = {
-    host: process.env.DB_HOST,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASS,
-    database: process.env.DB_NAME,
+    host: mustEnv("DB_HOST"),
+    user: mustEnv("DB_USER"),
+    password: mustEnv("DB_PASS"),
+    database: mustEnv("DB_NAME"),
+    port: 3306,
+    family: 4,                 // 🔥 FIXES ::1 IPv6 ISSUE
     waitForConnections: true,
     connectionLimit: 5
 };
 
-/* ==========================
+/* ===============================
    TABLE COLUMN INDEXES
-========================== */
-const IDX_SN = 0;
-const IDX_NAME = 1;
-const IDX_MSG = 2;
-const IDX_NUMBER = 3;
-const IDX_PAN = 4;
-const IDX_SALARY = 5;
-const IDX_DOB = 6;
+================================ */
+const IDX_SN      = 0;
+const IDX_NAME    = 1;
+const IDX_MSG     = 2;
+const IDX_NUMBER  = 3;
+const IDX_PAN     = 4;
+const IDX_SALARY  = 5;
+const IDX_DOB     = 6;
 const IDX_CREATED = 7;
 
-/* ==========================
-   LOGGING
-========================== */
+/* ===============================
+   LOGGER
+================================ */
 function log(msg, type = "INFO") {
     console.log(`[${new Date().toISOString()}] [${type}] ${msg}`);
 }
 
-/* ==========================
-   DATE PARSER
-========================== */
+/* ===============================
+   DOB PARSER
+================================ */
 function parseDate(val) {
     if (!val) return null;
     val = val.trim();
@@ -62,10 +76,12 @@ function parseDate(val) {
     return null;
 }
 
-/* ==========================
+/* ===============================
    DATABASE INIT
-========================== */
+================================ */
 async function initDB() {
+    log(`Connecting to DB at ${DB_CONFIG.host}...`);
+
     const pool = await mysql.createPool(DB_CONFIG);
 
     await pool.execute(`
@@ -85,12 +101,13 @@ async function initDB() {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
 
+    log("Database ready", "SUCCESS");
     return pool;
 }
 
-/* ==========================
+/* ===============================
    BROWSER
-========================== */
+================================ */
 async function createBrowser() {
     return puppeteer.launch({
         headless: "new",
@@ -102,43 +119,45 @@ async function createBrowser() {
     });
 }
 
-/* ==========================
+/* ===============================
    LOGIN
-========================== */
+================================ */
 async function login(page) {
-    log("Logging in...");
-    await page.goto(LOGIN_URL, { waitUntil: "networkidle0" });
+    log("Opening login page...");
+    await page.goto(LOGIN_URL, { waitUntil: "networkidle0", timeout: 60000 });
 
-    await page.type('input[name="email"]', EMAIL, { delay: 50 });
-    await page.type('input[name="password"]', PASSWORD, { delay: 50 });
+    await page.type('input[name="email"]', EMAIL, { delay: 40 });
+    await page.type('input[name="password"]', PASSWORD, { delay: 40 });
 
     await Promise.all([
         page.click('button[type="submit"]'),
-        page.waitForNavigation({ waitUntil: "networkidle0" })
+        page.waitForNavigation({ waitUntil: "networkidle0", timeout: 60000 })
     ]);
 
     log("Login successful", "SUCCESS");
 }
 
-/* ==========================
-   SCRAPER
-========================== */
+/* ===============================
+   SCRAPE + SAVE
+================================ */
 async function scrape(page, pool) {
-    log("Opening IVR logs...");
-    await page.goto(DATA_URL, { waitUntil: "networkidle0" });
-    await page.waitForSelector("tbody tr");
+    log("Opening IVR logs page...");
+    await page.goto(DATA_URL, { waitUntil: "networkidle0", timeout: 60000 });
 
-    const rows = await page.evaluate(() => {
-        return [...document.querySelectorAll("tbody tr")].map(tr =>
-            [...tr.querySelectorAll("td")].map(td =>
+    await page.waitForSelector("tbody tr", { timeout: 30000 });
+
+    const rows = await page.evaluate(() =>
+        Array.from(document.querySelectorAll("tbody tr")).map(tr =>
+            Array.from(tr.querySelectorAll("td")).map(td =>
                 td.textContent.replace(/\s+/g, " ").trim()
             )
-        );
-    });
+        )
+    );
 
     log(`Rows found: ${rows.length}`);
 
-    let saved = 0, duplicates = 0;
+    let inserted = 0;
+    let duplicates = 0;
 
     for (const row of rows) {
         if (row.length < 8) continue;
@@ -161,19 +180,19 @@ async function scrape(page, pool) {
                 row[IDX_CREATED]
             ]);
 
-            saved++;
-        } catch (err) {
-            if (err.code === "ER_DUP_ENTRY") duplicates++;
-            else log(err.message, "ERROR");
+            inserted++;
+        } catch (e) {
+            if (e.code === "ER_DUP_ENTRY") duplicates++;
+            else log(e.message, "ERROR");
         }
     }
 
-    log(`Saved: ${saved} | Duplicates: ${duplicates}`, "SUCCESS");
+    log(`Inserted: ${inserted} | Duplicates: ${duplicates}`, "SUCCESS");
 }
 
-/* ==========================
-   MAIN
-========================== */
+/* ===============================
+   MAIN (ONE RUN)
+================================ */
 (async () => {
     try {
         log("Scraper started");

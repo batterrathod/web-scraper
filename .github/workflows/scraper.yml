@@ -22,7 +22,7 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-           - name: Run Puppeteer Scraper
+      - name: Run Puppeteer Scraper
         env:
           LOGIN_EMAIL: ${{ secrets.LOGIN_EMAIL }}
           LOGIN_PASSWORD: ${{ secrets.LOGIN_PASSWORD }}
