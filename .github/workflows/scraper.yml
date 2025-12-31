@@ -1,9 +1,9 @@
-name: Moneyview Scraper
+name: Moneyview Scraper (Every 1 Minute)
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # runs every 5 minutes
-  workflow_dispatch:
+    - cron: "* * * * *"   # ✅ runs every 1 minute (GitHub minimum)
+  workflow_dispatch:      # allows manual run button
 
 jobs:
   scrape:
