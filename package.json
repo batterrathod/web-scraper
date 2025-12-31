@@ -1,0 +1,14 @@
+{
+  "name": "moneyview-scraper",
+  "version": "1.0.0",
+  "description": "Moneyview IVR Puppeteer Scraper (GitHub Actions)",
+  "main": "scraper.js",
+  "scripts": {
+    "start": "node scraper.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "mysql2": "^3.9.7",
+    "puppeteer": "^22.8.0"
+  }
+}
