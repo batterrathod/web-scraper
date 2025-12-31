@@ -1,7 +1,7 @@
 /**
- * Moneyview IVR Scraper
- * GitHub Actions + Local compatible
- * One-run architecture (NO infinite loop)
+ * Moneyview IVR Scraper – LOOP MODE
+ * Runs 24/7 on VPS / Oracle VM / Local / PM2 / Docker
+ * ❌ NOT for GitHub Actions
  */
 
 require("dotenv").config();
@@ -9,7 +9,16 @@ const puppeteer = require("puppeteer");
 const mysql = require("mysql2/promise");
 
 /* ===============================
-   FAIL-FAST ENV VALIDATION
+   CONFIG
+================================ */
+const SCRAPE_INTERVAL_MS = 20 * 1000; // 20 seconds
+const MAX_ERRORS = 5;
+
+const LOGIN_URL = "https://mv-dashboard.switchmyloan.in/login";
+const DATA_URL  = "https://mv-dashboard.switchmyloan.in/mv-ivr-logs";
+
+/* ===============================
+   ENV VALIDATION
 ================================ */
 function mustEnv(name) {
     if (!process.env[name] || process.env[name].trim() === "") {
@@ -19,28 +28,25 @@ function mustEnv(name) {
     return process.env[name];
 }
 
-/* ===============================
-   CONFIG
-================================ */
-const LOGIN_URL = "https://mv-dashboard.switchmyloan.in/login";
-const DATA_URL  = "https://mv-dashboard.switchmyloan.in/mv-ivr-logs";
-
 const EMAIL    = mustEnv("LOGIN_EMAIL");
 const PASSWORD = mustEnv("LOGIN_PASSWORD");
 
+/* ===============================
+   DATABASE CONFIG
+================================ */
 const DB_CONFIG = {
     host: mustEnv("DB_HOST"),
     user: mustEnv("DB_USER"),
     password: mustEnv("DB_PASS"),
     database: mustEnv("DB_NAME"),
     port: 3306,
-    family: 4,                 // 🔥 FIXES ::1 IPv6 ISSUE
+    family: 4,               // 🔥 FIX ::1 localhost issue
     waitForConnections: true,
     connectionLimit: 5
 };
 
 /* ===============================
-   TABLE COLUMN INDEXES
+   COLUMN INDEXES
 ================================ */
 const IDX_SN      = 0;
 const IDX_NAME    = 1;
@@ -52,15 +58,14 @@ const IDX_DOB     = 6;
 const IDX_CREATED = 7;
 
 /* ===============================
-   LOGGER
+   HELPERS
 ================================ */
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
 function log(msg, type = "INFO") {
     console.log(`[${new Date().toISOString()}] [${type}] ${msg}`);
 }
 
-/* ===============================
-   DOB PARSER
-================================ */
 function parseDate(val) {
     if (!val) return null;
     val = val.trim();
@@ -80,7 +85,7 @@ function parseDate(val) {
    DATABASE INIT
 ================================ */
 async function initDB() {
-    log(`Connecting to DB at ${DB_CONFIG.host}...`);
+    log(`Connecting DB → ${DB_CONFIG.host}`);
 
     const pool = await mysql.createPool(DB_CONFIG);
 
@@ -123,7 +128,7 @@ async function createBrowser() {
    LOGIN
 ================================ */
 async function login(page) {
-    log("Opening login page...");
+    log("Logging in...");
     await page.goto(LOGIN_URL, { waitUntil: "networkidle0", timeout: 60000 });
 
     await page.type('input[name="email"]', EMAIL, { delay: 40 });
@@ -138,12 +143,11 @@ async function login(page) {
 }
 
 /* ===============================
-   SCRAPE + SAVE
+   SCRAPE FUNCTION
 ================================ */
 async function scrape(page, pool) {
-    log("Opening IVR logs page...");
+    log("Scraping IVR logs...");
     await page.goto(DATA_URL, { waitUntil: "networkidle0", timeout: 60000 });
-
     await page.waitForSelector("tbody tr", { timeout: 30000 });
 
     const rows = await page.evaluate(() =>
@@ -191,27 +195,61 @@ async function scrape(page, pool) {
 }
 
 /* ===============================
-   MAIN (ONE RUN)
+   MAIN LOOP
 ================================ */
 (async () => {
+    let browser = null;
+    let page = null;
+    let pool = null;
+    let errorCount = 0;
+
+    async function cleanup(exit = false) {
+        log("Cleaning up...");
+        try {
+            if (page) await page.close();
+            if (browser) await browser.close();
+            if (pool) await pool.end();
+        } catch (e) {
+            log(e.message, "ERROR");
+        }
+        if (exit) process.exit(0);
+    }
+
+    process.on("SIGINT", () => cleanup(true));
+    process.on("SIGTERM", () => cleanup(true));
+
     try {
-        log("Scraper started");
+        log("SCRAPER STARTED (LOOP MODE)");
 
-        const pool = await initDB();
-        const browser = await createBrowser();
-        const page = await browser.newPage();
-
+        pool = await initDB();
+        browser = await createBrowser();
+        page = await browser.newPage();
         await login(page);
-        await scrape(page, pool);
 
-        await browser.close();
-        await pool.end();
+        while (true) {
+            try {
+                await scrape(page, pool);
+                errorCount = 0;
+            } catch (err) {
+                errorCount++;
+                log(`Scrape error (${errorCount}/${MAX_ERRORS}): ${err.message}`, "ERROR");
 
-        log("Scraper finished successfully", "SUCCESS");
-        process.exit(0);
+                if (errorCount >= MAX_ERRORS) {
+                    log("Restarting browser...", "WARN");
+                    try { await browser.close(); } catch {}
+                    browser = await createBrowser();
+                    page = await browser.newPage();
+                    await login(page);
+                    errorCount = 0;
+                }
+            }
 
-    } catch (err) {
-        log(err.stack || err.message, "CRITICAL");
-        process.exit(1);
+            log(`Sleeping ${SCRAPE_INTERVAL_MS / 1000}s...`);
+            await sleep(SCRAPE_INTERVAL_MS);
+        }
+
+    } catch (fatal) {
+        log(fatal.stack || fatal.message, "CRITICAL");
+        await cleanup(true);
     }
 })();

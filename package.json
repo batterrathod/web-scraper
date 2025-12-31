@@ -8,8 +8,8 @@
   },
   "dependencies": {
     "dotenv": "^17.2.3",
-    "mysql2": "^3.9.7",
-    "puppeteer": "^22.8.0"
+    "mysql2": "^3.16.0",
+    "puppeteer": "^22.15.0"
   },
   "repository": {
     "type": "git",
