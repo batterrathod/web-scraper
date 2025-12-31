@@ -10,5 +10,17 @@
     "dotenv": "^17.2.3",
     "mysql2": "^3.9.7",
     "puppeteer": "^22.8.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/batterrathod/web-scraper.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/batterrathod/web-scraper/issues"
+  },
+  "homepage": "https://github.com/batterrathod/web-scraper#readme"
 }
