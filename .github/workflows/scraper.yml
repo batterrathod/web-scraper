@@ -1,8 +1,8 @@
-name: Moneyview Scraper (1 Min)
+name: Moneyview Scraper
 
 on:
   schedule:
-    - cron: "* * * * *"   # ✅ every 1 minute (minimum possible)
+    - cron: "* * * * *"   # every minute (minimum possible)
   workflow_dispatch:
 
 jobs:
@@ -11,17 +11,14 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 18
 
       - name: Install dependencies
-        run: |
-          npm install puppeteer mysql2
+        run: npm install puppeteer mysql2
 
       - name: Run scraper
         run: node scraper.js
