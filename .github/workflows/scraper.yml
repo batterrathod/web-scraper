@@ -2,10 +2,14 @@ name: IVR Scraper Every Minute
 
 on:
   schedule:
+<<<<<<< HEAD
     - cron: '*/1 * * * *'  # Every minute
   workflow_dispatch:  # Allow manual trigger
   push:
     branches: [ main ]
+=======
+    - cron: "* * * * *"   # ✅ every 1 minute (minimum possible)
+>>>>>>> 0d18cd7d94a2f771861688592d68f5ff5500f11c
 
 jobs:
   scrape:
@@ -13,16 +17,23 @@ jobs:
     timeout-minutes: 5
     
     steps:
+<<<<<<< HEAD
       - name: Checkout repository
         uses: actions/checkout@v4
       
       - name: Setup Node.js
         uses: actions/setup-node@v4
+=======
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+>>>>>>> 0d18cd7d94a2f771861688592d68f5ff5500f11c
         with:
           node-version: '18'
           cache: 'npm'
           
       - name: Install dependencies
+<<<<<<< HEAD
         run: |
           npm install puppeteer mysql2
           npx puppeteer browsers install chrome
@@ -262,6 +273,10 @@ jobs:
           });
           EOF
           
+=======
+        run: npm install puppeteer mysql2
+
+>>>>>>> 0d18cd7d94a2f771861688592d68f5ff5500f11c
       - name: Run scraper
         run: node scraper.js
         
