@@ -3,14 +3,6 @@ name: Moneyview Scraper
 on:
   schedule:
     - cron: "* * * * *"   # ✅ every 1 minute (minimum possible)
-  
-  # Optional: Enable manual triggers
-  workflow_dispatch:
-  
-  # Optional: Run on push to main branch
-  push:
-    branches:
-      - main
 
 jobs:
   scrape:
@@ -18,50 +10,14 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 18
-          cache: 'npm'
 
       - name: Install dependencies
         run: npm install puppeteer mysql2
 
-      - name: Create .env file from secrets
-        run: |
-          cat << EOF > .env
-          LOGIN_EMAIL=${{ secrets.LOGIN_EMAIL }}
-          LOGIN_PASSWORD=${{ secrets.LOGIN_PASSWORD }}
-          DB_HOST=${{ secrets.DB_HOST }}
-          DB_USER=${{ secrets.DB_USER }}
-          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-          DB_NAME=${{ secrets.DB_NAME }}
-          EOF
-
       - name: Run scraper
-        env:
-          LOGIN_EMAIL: ${{ secrets.LOGIN_EMAIL }}
-          LOGIN_PASSWORD: ${{ secrets.LOGIN_PASSWORD }}
-          DB_HOST: ${{ secrets.DB_HOST }}
-          DB_USER: ${{ secrets.DB_USER }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          DB_NAME: ${{ secrets.DB_NAME }}
         run: node scraper.js
-
-      # Optional: Clean up .env file after run
-      - name: Clean up .env file
-        run: rm -f .env
-
-      # Optional: Upload logs on failure
-      - name: Upload logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: scraper-logs
-          path: |
-            *.log
-            logs/
-          retention-days: 7
