@@ -1,18 +1,14 @@
-name: Moneyview IVR Scraper
+name: Moneyview IVR Scraper New
 
 on:
   schedule:
-    - cron: "* * * * *"   # runs every 1 minute
-  workflow_dispatch:
+    - cron: "*/5 * * * *"   # GitHub minimum allowed (every 5 minutes)
+  workflow_dispatch:        # Optional manual trigger
 
 jobs:
-  scrape:
+  run-scraper:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    concurrency:
-      group: moneyview-ivr-scraper
-      cancel-in-progress: true
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
@@ -25,8 +21,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm install puppeteer mysql2 dotenv
+          npm install puppeteer mysql2
 
-      - name: Run scraper
-        run: |
-          node scraper.js
+      - name: Run Moneyview Scraper
+        run: node scraper.js
