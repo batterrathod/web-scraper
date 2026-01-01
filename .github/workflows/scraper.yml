@@ -2,7 +2,7 @@ name: Moneyview Scraper
 
 on:
   schedule:
-    - cron: "*/1 * * * *"   # runs every 5 minutes
+    - cron: "*/5 * * * *"   # runs every 5 minutes
   workflow_dispatch:
 
 jobs:
