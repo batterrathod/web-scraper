@@ -1,24 +1,32 @@
-name: Moneyview Scraper
+name: Moneyview IVR Scraper
 
 on:
   schedule:
-    - cron: "* * * * *"   # every minute (minimum possible)
+    - cron: "* * * * *"   # runs every 1 minute
   workflow_dispatch:
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
+
+    concurrency:
+      group: moneyview-ivr-scraper
+      cancel-in-progress: true
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 18
 
       - name: Install dependencies
-        run: npm install puppeteer mysql2
+        run: |
+          npm install puppeteer mysql2 dotenv
 
       - name: Run scraper
-        run: node scraper.js
+        run: |
+          node scraper.js
