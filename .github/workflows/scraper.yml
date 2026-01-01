@@ -1,27 +1,275 @@
-name: Moneyview Scraper
+name: IVR Scraper Every Minute
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # runs every 5 minutes
-  workflow_dispatch:
+    - cron: '*/1 * * * *'  # Every minute
+  workflow_dispatch:  # Allow manual trigger
+  push:
+    branches: [ main ]
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
+    timeout-minutes: 5
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
+      
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
-
+          node-version: '18'
+          cache: 'npm'
+          
       - name: Install dependencies
         run: |
           npm install puppeteer mysql2
-
+          npx puppeteer browsers install chrome
+          
+      - name: Create scraper script with hardcoded credentials
+        run: |
+          cat > scraper.js << 'EOF'
+          /**
+           * Moneyview IVR Scraper - GitHub Actions Version
+           * WARNING: Hardcoded credentials - NOT FOR PRODUCTION
+           */
+          
+          const puppeteer = require('puppeteer');
+          const mysql = require('mysql2/promise');
+          
+          // ===============================
+          // HARDCODED CREDENTIALS (INSECURE!)
+          // ===============================
+          const LOGIN_URL = "https://mv-dashboard.switchmyloan.in/login";
+          const DATA_URL = "https://mv-dashboard.switchmyloan.in/mv-ivr-logs";
+          
+          // 🔴 INSECURE: Hardcoded login
+          const EMAIL = "admin@switchmyloan.in";
+          const PASSWORD = "Admin@123";
+          
+          // 🔴 INSECURE: Hardcoded database
+          const DB_CONFIG = {
+              host: "82.25.121.2",
+              user: "u527886566_scraper_db",
+              password: "VAKILr6762",
+              database: "u527886566_scraper_db",
+              port: 3306,
+              waitForConnections: true,
+              connectionLimit: 5
+          };
+          
+          // ===============================
+          // LOGGER
+          // ===============================
+          function log(msg, type = "INFO") {
+              const timestamp = new Date().toISOString();
+              console.log(`[${timestamp}] [${type}] ${msg}`);
+          }
+          
+          // ===============================
+          // DATABASE SETUP
+          // ===============================
+          async function initDB() {
+              try {
+                  const pool = await mysql.createPool(DB_CONFIG);
+                  log("Database connected");
+                  
+                  await pool.execute(`
+                      CREATE TABLE IF NOT EXISTS ivr_logs (
+                          id INT AUTO_INCREMENT PRIMARY KEY,
+                          sn VARCHAR(50),
+                          full_name VARCHAR(255),
+                          moneyview_msg TEXT,
+                          phone_number VARCHAR(20),
+                          pan_card VARCHAR(20),
+                          salary VARCHAR(100),
+                          dob_raw VARCHAR(50),
+                          dob DATE,
+                          created VARCHAR(50),
+                          scrape_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                          UNIQUE KEY unique_record (phone_number, pan_card, created)
+                      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                  `);
+                  
+                  return pool;
+              } catch (error) {
+                  log(`Database error: ${error.message}`, "ERROR");
+                  throw error;
+              }
+          }
+          
+          // ===============================
+          // BROWSER SETUP
+          // ===============================
+          async function setupBrowser() {
+              return puppeteer.launch({
+                  headless: 'new',
+                  args: [
+                      '--no-sandbox',
+                      '--disable-setuid-sandbox',
+                      '--disable-dev-shm-usage',
+                      '--disable-gpu',
+                      '--window-size=1920,1080'
+                  ]
+              });
+          }
+          
+          // ===============================
+          // LOGIN FUNCTION
+          // ===============================
+          async function login(page) {
+              log("Logging in...");
+              
+              await page.goto(LOGIN_URL, { 
+                  waitUntil: 'networkidle0', 
+                  timeout: 60000 
+              });
+              
+              await page.type('input[name="email"]', EMAIL, { delay: 50 });
+              await page.type('input[name="password"]', PASSWORD, { delay: 50 });
+              
+              await Promise.all([
+                  page.click('button[type="submit"]'),
+                  page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 60000 })
+              ]);
+              
+              log("Login successful", "SUCCESS");
+          }
+          
+          // ===============================
+          // SCRAPE FUNCTION
+          // ===============================
+          async function scrapeData(page, pool) {
+              log("Navigating to data page...");
+              
+              await page.goto(DATA_URL, { 
+                  waitUntil: 'networkidle0', 
+                  timeout: 60000 
+              });
+              
+              await page.waitForSelector('tbody tr', { timeout: 30000 });
+              
+              // Extract table data
+              const rows = await page.evaluate(() => {
+                  return Array.from(document.querySelectorAll('tbody tr')).map(tr => {
+                      return Array.from(tr.querySelectorAll('td')).map(td => 
+                          td.textContent.replace(/\s+/g, ' ').trim()
+                      );
+                  });
+              });
+              
+              log(`Found ${rows.length} rows`);
+              
+              let inserted = 0;
+              let duplicates = 0;
+              let errors = 0;
+              
+              for (const row of rows) {
+                  if (row.length < 8) continue;
+                  
+                  try {
+                      // Parse date
+                      let dob = null;
+                      if (row[6]) {
+                          const dateStr = row[6].trim();
+                          const isoDate = new Date(dateStr);
+                          if (!isNaN(isoDate)) {
+                              dob = isoDate.toISOString().split('T')[0];
+                          }
+                      }
+                      
+                      await pool.execute(`
+                          INSERT INTO ivr_logs 
+                          (sn, full_name, moneyview_msg, phone_number, pan_card, salary, dob_raw, dob, created)
+                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                          ON DUPLICATE KEY UPDATE scrape_timestamp = NOW()
+                      `, [
+                          row[0] || '',      // SN
+                          row[1] || '',      // Name
+                          row[2] || '',      // Message
+                          row[3] || '',      // Number
+                          row[4] || '',      // PAN
+                          row[5] || '',      // Salary
+                          row[6] || '',      // DOB Raw
+                          dob,               // DOB Parsed
+                          row[7] || ''       // Created
+                      ]);
+                      
+                      inserted++;
+                  } catch (error) {
+                      if (error.code === 'ER_DUP_ENTRY') {
+                          duplicates++;
+                      } else {
+                          errors++;
+                          log(`Insert error: ${error.message}`, "ERROR");
+                      }
+                  }
+              }
+              
+              log(`Results: ${inserted} inserted, ${duplicates} duplicates, ${errors} errors`, "SUCCESS");
+              
+              return { inserted, duplicates, errors };
+          }
+          
+          // ===============================
+          // MAIN FUNCTION
+          // ===============================
+          async function main() {
+              let browser = null;
+              let pool = null;
+              
+              try {
+                  log("Starting scraper...");
+                  
+                  // Initialize database
+                  pool = await initDB();
+                  
+                  // Launch browser
+                  browser = await setupBrowser();
+                  const page = await browser.newPage();
+                  await page.setViewport({ width: 1920, height: 1080 });
+                  
+                  // Login
+                  await login(page);
+                  
+                  // Scrape data
+                  const result = await scrapeData(page, pool);
+                  
+                  log(`Scraping completed. Total processed: ${result.inserted + result.duplicates}`);
+                  
+              } catch (error) {
+                  log(`Critical error: ${error.message}`, "CRITICAL");
+                  console.error(error.stack);
+                  process.exit(1);
+              } finally {
+                  // Cleanup
+                  if (browser) {
+                      await browser.close();
+                      log("Browser closed");
+                  }
+                  if (pool) {
+                      await pool.end();
+                      log("Database connection closed");
+                  }
+              }
+          }
+          
+          // Run the scraper
+          main().catch(error => {
+              console.error('Unhandled error:', error);
+              process.exit(1);
+          });
+          EOF
+          
       - name: Run scraper
         run: node scraper.js
+        
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scraper-logs
+          path: |
+            *.log
+          retention-days: 7
