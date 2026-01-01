@@ -1,0 +1,27 @@
+name:  Scraper
+
+on:
+  schedule:
+    - cron: "*/1 * * * *"   # runs every 5 minutes
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: |
+          npm install puppeteer mysql2
+
+      - name: Run scraper
+        run: node scraper.js
