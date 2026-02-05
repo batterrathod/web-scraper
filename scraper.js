@@ -22,7 +22,7 @@ const DB_CONFIG = {
 
 const LOGIN_CREDENTIALS = {
     email: "admin@switchmyloan.in",
-    password: "Admin@123"
+    password: "Cready@2026"
 };
 
 const LOGIN_URL = "https://mv-dashboard.switchmyloan.in/login";
