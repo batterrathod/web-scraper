@@ -1,7 +1,8 @@
 /**
- * Moneyview IVR Scraper – SINGLE RUN MODE
- * ✅ GitHub Actions / Cron / Render Compatible
- * ❌ No infinite loop
+ * Moneyview IVR Scraper – STABLE SINGLE RUN MODE
+ * ✅ GitHub Actions Ready
+ * ✅ Timeout Safe
+ * ✅ Dashboard Polling Safe
  */
 
 const puppeteer = require("puppeteer");
@@ -41,11 +42,14 @@ const IDX_DOB     = 6;
 const IDX_CREATED = 7;
 
 /* ===============================
-   HELPERS
+   LOGGER
 ================================ */
 const log = (msg, type = "INFO") =>
     console.log(`[${new Date().toISOString()}] [${type}] ${msg}`);
 
+/* ===============================
+   DATE PARSER
+================================ */
 function parseDate(val) {
     if (!val) return null;
     const iso = new Date(val);
@@ -90,7 +94,7 @@ async function initDB() {
 async function createBrowser() {
     log("Launching browser...");
     return puppeteer.launch({
-        headless: "new",
+        headless: true,
         args: [
             "--no-sandbox",
             "--disable-setuid-sandbox",
@@ -104,28 +108,47 @@ async function createBrowser() {
    LOGIN
 ================================ */
 async function login(page) {
-    log("Logging in...");
-    await page.goto(LOGIN_URL, { waitUntil: "networkidle0" });
+    log("Opening login page...");
+    await page.goto(LOGIN_URL, {
+        waitUntil: "domcontentloaded",
+        timeout: 90000
+    });
 
-    await page.type('input[name="email"]', LOGIN_CREDENTIALS.email, { delay: 30 });
-    await page.type('input[name="password"]', LOGIN_CREDENTIALS.password, { delay: 30 });
+    await page.type('input[name="email"]', LOGIN_CREDENTIALS.email);
+    await page.type('input[name="password"]', LOGIN_CREDENTIALS.password);
 
     await Promise.all([
         page.click('button[type="submit"]'),
-        page.waitForNavigation({ waitUntil: "networkidle0" })
+        page.waitForNavigation({
+            waitUntil: "domcontentloaded",
+            timeout: 90000
+        })
     ]);
+
+    await page.waitForTimeout(3000);
 
     log("Login successful", "SUCCESS");
 }
 
 /* ===============================
-   SCRAPE
+   SCRAPER
 ================================ */
 async function scrape(page, pool) {
     log("Opening IVR logs page...");
-    await page.goto(DATA_URL, { waitUntil: "networkidle0" });
 
-    await page.waitForSelector("tbody tr");
+    const response = await page.goto(DATA_URL, {
+        waitUntil: "domcontentloaded",
+        timeout: 90000
+    });
+
+    log(`HTTP Status: ${response.status()}`);
+
+    await page.waitForFunction(
+        () => document.querySelectorAll("tbody tr").length > 0,
+        { timeout: 60000 }
+    );
+
+    log("Table loaded successfully");
 
     const rows = await page.evaluate(() => {
         return Array.from(document.querySelectorAll("tbody tr")).map(tr =>
@@ -137,7 +160,8 @@ async function scrape(page, pool) {
 
     log(`Rows found: ${rows.length}`);
 
-    let inserted = 0, duplicates = 0;
+    let inserted = 0;
+    let duplicates = 0;
 
     for (const row of rows) {
         try {
@@ -178,13 +202,16 @@ async function scrape(page, pool) {
 
         pool = await initDB();
         browser = await createBrowser();
-        const page = await browser.newPage();
 
-        await page.setViewport({ width: 1366, height: 768 });
+        const page = await browser.newPage();
+        page.setDefaultNavigationTimeout(90000);
+        page.setDefaultTimeout(90000);
+
         await login(page);
         await scrape(page, pool);
 
         log("Scraping completed successfully", "SUCCESS");
+
     } catch (err) {
         log(err.message, "ERROR");
         process.exit(1);
