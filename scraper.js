@@ -1,15 +1,16 @@
 /**
- * Moneyview IVR Scraper – STABLE SINGLE RUN MODE
+ * Moneyview IVR Scraper – FINAL STABLE VERSION
  * ✅ GitHub Actions Ready
+ * ✅ No waitForTimeout
  * ✅ Timeout Safe
- * ✅ Dashboard Polling Safe
+ * ✅ Clean Exit
  */
 
 const puppeteer = require("puppeteer");
 const mysql = require("mysql2/promise");
 
 /* ===============================
-   CONFIGURATION
+   CONFIG
 ================================ */
 const DB_CONFIG = {
     host: "82.25.121.2",
@@ -30,7 +31,7 @@ const LOGIN_URL = "https://mv-dashboard.switchmyloan.in/login";
 const DATA_URL  = "https://mv-dashboard.switchmyloan.in/mv-ivr-logs";
 
 /* ===============================
-   COLUMN INDEXES
+   INDEXES
 ================================ */
 const IDX_SN      = 0;
 const IDX_NAME    = 1;
@@ -48,20 +49,27 @@ const log = (msg, type = "INFO") =>
     console.log(`[${new Date().toISOString()}] [${type}] ${msg}`);
 
 /* ===============================
+   SAFE DELAY
+================================ */
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+/* ===============================
    DATE PARSER
 ================================ */
 function parseDate(val) {
     if (!val) return null;
+
     const iso = new Date(val);
     if (!isNaN(iso)) return iso.toISOString().split("T")[0];
 
     const m = val.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
     if (m) return `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`;
+
     return null;
 }
 
 /* ===============================
-   DATABASE
+   DATABASE INIT
 ================================ */
 async function initDB() {
     log("Connecting to database...");
@@ -109,6 +117,7 @@ async function createBrowser() {
 ================================ */
 async function login(page) {
     log("Opening login page...");
+
     await page.goto(LOGIN_URL, {
         waitUntil: "domcontentloaded",
         timeout: 90000
@@ -125,7 +134,7 @@ async function login(page) {
         })
     ]);
 
-    await page.waitForTimeout(3000);
+    await delay(3000);
 
     log("Login successful", "SUCCESS");
 }
@@ -141,14 +150,18 @@ async function scrape(page, pool) {
         timeout: 90000
     });
 
-    log(`HTTP Status: ${response.status()}`);
+    if (!response || response.status() !== 200) {
+        throw new Error("Failed to load IVR logs page");
+    }
+
+    log("Page loaded successfully");
 
     await page.waitForFunction(
         () => document.querySelectorAll("tbody tr").length > 0,
         { timeout: 60000 }
     );
 
-    log("Table loaded successfully");
+    log("Table detected");
 
     const rows = await page.evaluate(() => {
         return Array.from(document.querySelectorAll("tbody tr")).map(tr =>
@@ -183,7 +196,8 @@ async function scrape(page, pool) {
             ]);
 
             res.affectedRows > 1 ? duplicates++ : inserted++;
-        } catch {
+
+        } catch (err) {
             duplicates++;
         }
     }
@@ -195,7 +209,8 @@ async function scrape(page, pool) {
    MAIN
 ================================ */
 (async () => {
-    let browser, pool;
+    let browser;
+    let pool;
 
     try {
         log("Moneyview Scraper Started");
@@ -215,6 +230,7 @@ async function scrape(page, pool) {
     } catch (err) {
         log(err.message, "ERROR");
         process.exit(1);
+
     } finally {
         if (browser) await browser.close();
         if (pool) await pool.end();
