@@ -1,239 +1,359 @@
-/**
- * Moneyview IVR Scraper – FINAL STABLE VERSION
- * ✅ GitHub Actions Ready
- * ✅ No waitForTimeout
- * ✅ Timeout Safe
- * ✅ Clean Exit
- */
-
 const puppeteer = require("puppeteer");
+
 const mysql = require("mysql2/promise");
 
-/* ===============================
-   CONFIG
-================================ */
-const DB_CONFIG = {
-    host: "82.25.121.2",
-    user: "u527886566_scraper_db",
-    password: "VAKILr6762",
-    database: "u527886566_scraper_db",
-    port: 3306,
-    waitForConnections: true,
-    connectionLimit: 5
-};
-
-const LOGIN_CREDENTIALS = {
-    email: "admin@switchmyloan.in",
-    password: "Cready@2026"
-};
+// ================= CONFIG =================
 
 const LOGIN_URL = "https://mv-dashboard.switchmyloan.in/login";
-const DATA_URL  = "https://mv-dashboard.switchmyloan.in/mv-ivr-logs";
 
-/* ===============================
-   INDEXES
-================================ */
-const IDX_SN      = 0;
-const IDX_NAME    = 1;
-const IDX_MSG     = 2;
-const IDX_NUMBER  = 3;
-const IDX_PAN     = 4;
-const IDX_SALARY  = 5;
-const IDX_DOB     = 6;
-const IDX_CREATED = 7;
+const DATA_URL = "https://mv-dashboard.switchmyloan.in/mv-ivr-logs";
 
-/* ===============================
-   LOGGER
-================================ */
-const log = (msg, type = "INFO") =>
-    console.log(`[${new Date().toISOString()}] [${type}] ${msg}`);
+const EMAIL = "admin@switchmyloan.in";
 
-/* ===============================
-   SAFE DELAY
-================================ */
-const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const PASSWORD = "Cready@2026";
 
-/* ===============================
-   DATE PARSER
-================================ */
-function parseDate(val) {
-    if (!val) return null;
+const REFRESH_INTERVAL = 20000; // 20 sec
 
-    const iso = new Date(val);
-    if (!isNaN(iso)) return iso.toISOString().split("T")[0];
+// ================= MYSQL POOL =================
 
-    const m = val.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (m) return `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`;
+const pool = mysql.createPool({
 
-    return null;
-}
+host: "82.25.121.2",
 
-/* ===============================
-   DATABASE INIT
-================================ */
-async function initDB() {
-    log("Connecting to database...");
-    const pool = await mysql.createPool(DB_CONFIG);
+user: "u527886566_credifyy",
 
-    await pool.execute(`
-        CREATE TABLE IF NOT EXISTS ivr_logs (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            sn VARCHAR(50),
-            full_name VARCHAR(255),
-            moneyview_msg TEXT,
-            phone_number VARCHAR(20),
-            pan_card VARCHAR(20),
-            salary VARCHAR(100),
-            dob_raw VARCHAR(50),
-            dob DATE,
-            created VARCHAR(50),
-            scrape_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE KEY unique_record (phone_number, pan_card, created)
-        )
-    `);
+password: "VAKILr@6762",
 
-    log("Database ready", "SUCCESS");
-    return pool;
-}
+database: "u527886566_credifyy",
 
-/* ===============================
-   BROWSER
-================================ */
-async function createBrowser() {
-    log("Launching browser...");
-    return puppeteer.launch({
-        headless: true,
-        args: [
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-gpu"
-        ]
-    });
-}
+waitForConnections: true,
 
-/* ===============================
-   LOGIN
-================================ */
-async function login(page) {
-    log("Opening login page...");
+connectionLimit: 5,
 
-    await page.goto(LOGIN_URL, {
-        waitUntil: "domcontentloaded",
-        timeout: 90000
-    });
+queueLimit: 0
 
-    await page.type('input[name="email"]', LOGIN_CREDENTIALS.email);
-    await page.type('input[name="password"]', LOGIN_CREDENTIALS.password);
+});
 
-    await Promise.all([
-        page.click('button[type="submit"]'),
-        page.waitForNavigation({
-            waitUntil: "domcontentloaded",
-            timeout: 90000
-        })
-    ]);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-    await delay(3000);
+// ================= DASHBOARD =================
 
-    log("Login successful", "SUCCESS");
-}
+async function getStats() {
 
-/* ===============================
-   SCRAPER
-================================ */
-async function scrape(page, pool) {
-    log("Opening IVR logs page...");
+try {
 
-    const response = await page.goto(DATA_URL, {
-        waitUntil: "domcontentloaded",
-        timeout: 90000
-    });
+    const [totalRows] = await pool.query(
 
-    if (!response || response.status() !== 200) {
-        throw new Error("Failed to load IVR logs page");
-    }
+        "SELECT COUNT(*) as total FROM ivr_logs"
 
-    log("Page loaded successfully");
-
-    await page.waitForFunction(
-        () => document.querySelectorAll("tbody tr").length > 0,
-        { timeout: 60000 }
     );
 
-    log("Table detected");
 
-    const rows = await page.evaluate(() => {
-        return Array.from(document.querySelectorAll("tbody tr")).map(tr =>
-            Array.from(tr.querySelectorAll("td")).map(td =>
-                td.innerText.replace(/\s+/g, " ").trim()
-            )
-        ).filter(r => r.length >= 8);
-    });
 
-    log(`Rows found: ${rows.length}`);
+    const [todayRows] = await pool.query(
 
-    let inserted = 0;
-    let duplicates = 0;
+        "SELECT COUNT(*) as today FROM ivr_logs WHERE DATE(captured_at)=CURDATE()"
 
-    for (const row of rows) {
-        try {
-            const [res] = await pool.execute(`
-                INSERT INTO ivr_logs
-                (sn, full_name, moneyview_msg, phone_number, pan_card, salary, dob_raw, dob, created)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON DUPLICATE KEY UPDATE scrape_timestamp = NOW()
-            `, [
-                row[IDX_SN],
-                row[IDX_NAME],
-                row[IDX_MSG],
-                row[IDX_NUMBER],
-                row[IDX_PAN],
-                row[IDX_SALARY],
-                row[IDX_DOB],
-                parseDate(row[IDX_DOB]),
-                row[IDX_CREATED]
-            ]);
+    );
 
-            res.affectedRows > 1 ? duplicates++ : inserted++;
 
-        } catch (err) {
-            duplicates++;
-        }
-    }
 
-    log(`Inserted: ${inserted} | Duplicates: ${duplicates}`, "SUCCESS");
+    return {
+
+        total: totalRows[0].total || 0,
+
+        today: todayRows[0].today || 0
+
+    };
+
+
+
+} catch (err) {
+
+    return {
+
+        total: 0,
+
+        today: 0
+
+    };
+
 }
 
-/* ===============================
-   MAIN
-================================ */
+}
+
+function showDashboard(stats, newLeads) {
+
+console.clear();
+
+console.log("====================================");
+
+console.log("        🚀 DATA LEAD BOT");
+
+console.log("====================================");
+
+console.log("📊 Total Leads       :", stats.total);
+
+console.log("📅 Today's Leads     :", stats.today);
+
+console.log("🆕 New This Cycle    :", newLeads);
+
+console.log("⏱ Last Update        :", new Date().toLocaleString());
+
+console.log("====================================");
+
+}
+
+// ================= SAFE INSERT =================
+
+async function insertRows(rows) {
+
+if (!rows || rows.length === 0) return 0;
+
+
+
+const now = new Date();
+
+
+
+const values = [];
+
+
+
+for (const r of rows) {
+
+
+
+    if (!r[3]) continue; // skip if number missing
+
+
+
+    values.push([
+
+        r[0] || null,
+
+        r[1] || null,
+
+        r[2] || null,
+
+        r[3] || null,
+
+        r[4] || null,
+
+        r[5] || null,
+
+        r[6] || null,
+
+        r[7] || null,
+
+        now
+
+    ]);
+
+}
+
+
+
+if (values.length === 0) return 0;
+
+
+
+try {
+
+
+
+    const [result] = await pool.query(
+
+        `INSERT IGNORE INTO ivr_logs
+
+        (sn, full_name, moneyview_msg, number, pan_card, salary, dob, created, captured_at)
+
+        VALUES ?`,
+
+        [values]
+
+    );
+
+
+
+    return result.affectedRows || 0;
+
+
+
+} catch (err) {
+
+    console.log("DB Insert Error:", err.message);
+
+    return 0;
+
+}
+
+}
+
+// ================= MAIN BOT =================
+
+process.on("unhandledRejection", err => {
+
+console.error("Unhandled Error:", err.message);
+
+});
+
 (async () => {
-    let browser;
-    let pool;
+
+const browser = await puppeteer.launch({
+
+    headless: true,
+
+    args: ["--no-sandbox", "--disable-setuid-sandbox"]
+
+});
+
+
+
+const page = await browser.newPage();
+
+page.setDefaultTimeout(90000);
+
+
+
+async function login() {
+
+    await page.goto(LOGIN_URL, {
+
+        waitUntil: "networkidle2"
+
+    });
+
+    await page.type('input[name="email"]', EMAIL);
+
+    await page.type('input[name="password"]', PASSWORD);
+
+
+
+    await Promise.all([
+
+        page.click('button[type="submit"]'),
+
+        page.waitForNavigation({
+
+            waitUntil: "networkidle2"
+
+        })
+
+    ]);
+
+
+
+    console.log("✅ Logged in successfully");
+
+}
+
+
+
+await login();
+
+await page.goto(DATA_URL, {
+
+    waitUntil: "networkidle2"
+
+});
+
+
+
+while (true) {
+
+
 
     try {
-        log("Moneyview Scraper Started");
 
-        pool = await initDB();
-        browser = await createBrowser();
 
-        const page = await browser.newPage();
-        page.setDefaultNavigationTimeout(90000);
-        page.setDefaultTimeout(90000);
 
-        await login(page);
-        await scrape(page, pool);
+        await page.reload({
 
-        log("Scraping completed successfully", "SUCCESS");
+            waitUntil: "networkidle2"
+
+        });
+
+
+
+        // Check if session expired
+
+        if (page.url().includes("login")) {
+
+            console.log("Session expired. Re-logging...");
+
+            await login();
+
+            await page.goto(DATA_URL, {
+
+                waitUntil: "networkidle2"
+
+            });
+
+        }
+
+
+
+        await page.waitForSelector("tbody tr", {
+
+            timeout: 30000
+
+        });
+
+
+
+        const rows = await page.evaluate(() => {
+
+
+
+            const clean = t =>
+
+                t.replace(/\n/g, " ")
+
+                .replace(/[₹,]/g, "")
+
+                .trim();
+
+
+
+            return Array.from(document.querySelectorAll("tbody tr"))
+
+                .map(tr =>
+
+                    Array.from(tr.querySelectorAll("td"))
+
+                    .slice(0, 8)
+
+                    .map(td => clean(td.innerText))
+
+                )
+
+                .filter(row => row.length > 0);
+
+        });
+
+
+
+        const newLeads = await insertRows(rows);
+
+        const stats = await getStats();
+
+
+
+        showDashboard(stats, newLeads);
+
+
 
     } catch (err) {
-        log(err.message, "ERROR");
-        process.exit(1);
 
-    } finally {
-        if (browser) await browser.close();
-        if (pool) await pool.end();
-        log("Clean exit");
+        console.log("Loop Error:", err.message);
+
     }
+
+
+
+    await sleep(REFRESH_INTERVAL);
+
+}
+
 })();
