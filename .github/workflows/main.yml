@@ -1,9 +1,7 @@
 name: Moneyview Scraper data
 
 on:
-  schedule:
-    - cron: "* * * * *"   # Runs every 1 minute
-  workflow_dispatch:
+  workflow_dispatch:   # Manual trigger only
 
 jobs:
   run-scraper:
